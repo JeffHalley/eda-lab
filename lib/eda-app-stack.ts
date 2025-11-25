@@ -9,6 +9,7 @@ import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as source from "aws-cdk-lib/aws-lambda-event-sources";
 import { Construct } from "constructs";
 
 export class EDAAppStack extends cdk.Stack {
@@ -37,9 +38,7 @@ export class EDAAppStack extends cdk.Stack {
       },
     });
 
-    const mailerQ = new sqs.Queue(this, "mailer-q", {
-      receiveMessageWaitTime: cdk.Duration.seconds(10),
-    });
+
 
     const newImageTopic = new sns.Topic(this, "NewImageTopic", {
       displayName: "New Image topic",
@@ -54,6 +53,7 @@ export class EDAAppStack extends cdk.Stack {
       partitionKey: { name: "name", type: dynamodb.AttributeType.STRING },
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       tableName: "Imagess",
+      stream: dynamodb.StreamViewType.NEW_IMAGE,
     });
 
     const addMetadataFn = new lambdanode.NodejsFunction(
@@ -141,25 +141,6 @@ export class EDAAppStack extends cdk.Stack {
       })
     );
 
-    // Mailer queue subscription
-    newImageTopic.addSubscription(
-      new subs.SqsSubscription(mailerQ, {
-        filterPolicyWithMessageBody: {
-          Records: sns.FilterOrPolicy.policy({
-            s3: sns.FilterOrPolicy.policy({
-              object: sns.FilterOrPolicy.policy({
-                key: sns.FilterOrPolicy.filter(
-                  sns.SubscriptionFilter.stringFilter({
-                    matchPrefixes: ["image"],
-                  })
-                ),
-              }),
-            }),
-          }),
-        },
-        rawMessageDelivery: true,
-      })
-    );
 
 
     //
@@ -172,11 +153,6 @@ export class EDAAppStack extends cdk.Stack {
     });
     processImageFn.addEventSource(newImageEventSource);
 
-    const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    });
-    mailerFn.addEventSource(newImageMailEventSource);
 
     // Event source for DLQ
     const rejectedImageEventSource = new events.SqsEventSource(dlq, {
@@ -199,6 +175,13 @@ export class EDAAppStack extends cdk.Stack {
         resources: ["*"],
       })
     );
+
+        mailerFn.addEventSource(
+      new source.DynamoEventSource(imagesTable, {
+        startingPosition: lambda.StartingPosition.LATEST
+ })
+ )
+
 
     //
     // Output
