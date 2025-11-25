@@ -56,6 +56,20 @@ export class EDAAppStack extends cdk.Stack {
       tableName: "Imagess",
     });
 
+    const addMetadataFn = new lambdanode.NodejsFunction(
+      this,
+      "addMetadataFn",
+      {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        entry: `${__dirname}/../lambdas/addImageMetadata.ts`,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 128,
+        environment: {
+          TABLE_NAME: imagesTable.tableName,
+        },
+      }
+    );
+
     //
     // Lambda functions
     //
@@ -107,8 +121,46 @@ export class EDAAppStack extends cdk.Stack {
     // SNS - SQS subscriptions
     //
 
-    newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue));
-    newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+    // Image processing queue subscription
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(imageProcessQueue, {
+        filterPolicyWithMessageBody: {
+          Records: sns.FilterOrPolicy.policy({
+            s3: sns.FilterOrPolicy.policy({
+              object: sns.FilterOrPolicy.policy({
+                key: sns.FilterOrPolicy.filter(
+                  sns.SubscriptionFilter.stringFilter({
+                    matchPrefixes: ["image"],
+                  })
+                ),
+              }),
+            }),
+          }),
+        },
+        rawMessageDelivery: true,
+      })
+    );
+
+    // Mailer queue subscription
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(mailerQ, {
+        filterPolicyWithMessageBody: {
+          Records: sns.FilterOrPolicy.policy({
+            s3: sns.FilterOrPolicy.policy({
+              object: sns.FilterOrPolicy.policy({
+                key: sns.FilterOrPolicy.filter(
+                  sns.SubscriptionFilter.stringFilter({
+                    matchPrefixes: ["image"],
+                  })
+                ),
+              }),
+            }),
+          }),
+        },
+        rawMessageDelivery: true,
+      })
+    );
+
 
     //
     // SQS - Lambda event sources
@@ -151,6 +203,9 @@ export class EDAAppStack extends cdk.Stack {
     //
     // Output
     //
+    new cdk.CfnOutput(this, "SNS Topic ARN", {
+      value: newImageTopic.topicArn,
+    });
 
     new cdk.CfnOutput(this, "bucketName", {
       value: imagesBucket.bucketName,
